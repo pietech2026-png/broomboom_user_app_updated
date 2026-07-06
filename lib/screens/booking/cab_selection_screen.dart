@@ -601,6 +601,16 @@ class _CabSelectionScreenState extends State<CabSelectionScreen> with SingleTick
                 final priceMap = _pricingResults[car.name] ?? {};
                 double? advanceValue = priceMap['advance'] != null ? (priceMap['advance'] as num).toDouble() : null;
                 double? dueFareValue = priceMap['dueFare'] != null ? (priceMap['dueFare'] as num).toDouble() : null;
+                List<int>? advanceOptions;
+                if (priceMap['advanceOptions'] != null && priceMap['advanceOptions'] is List) {
+                  try {
+                    advanceOptions = (priceMap['advanceOptions'] as List)
+                        .map<int>((val) => int.parse(val.toString()))
+                        .toList();
+                  } catch (e) {
+                    print('Error parsing advanceOptions in cab selection: $e');
+                  }
+                }
 
                 Navigator.push(
                   context,
@@ -629,6 +639,7 @@ class _CabSelectionScreenState extends State<CabSelectionScreen> with SingleTick
                       returnTime: widget.endTime,
                       isPetCab: widget.petType != null,
                       petType: widget.petType,
+                      advanceOptions: advanceOptions,
                     ),
                   ),
                 );

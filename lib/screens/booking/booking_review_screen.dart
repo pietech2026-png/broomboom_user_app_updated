@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../data/services/booking_service.dart';
+import '../../data/services/settings_service.dart';
 import '../../data/models/booking.dart';
 import '../../data/models/addon.dart';
 import '../home/home_screen.dart';
@@ -28,6 +29,7 @@ class BookingReviewScreen extends StatefulWidget {
   final String? returnTime;
   final bool isPetCab;
   final String? petType;
+  final List<int>? advanceOptions;
 
   const BookingReviewScreen({
     super.key,
@@ -52,6 +54,7 @@ class BookingReviewScreen extends StatefulWidget {
     this.returnTime,
     this.isPetCab = false,
     this.petType,
+    this.advanceOptions,
   });
 
   @override
@@ -75,7 +78,8 @@ class _BookingReviewScreenState extends State<BookingReviewScreen> {
   double _discount = 0;
   String _appliedCoupon = '';
   final TextEditingController _couponController = TextEditingController();
-  int _selectedPaymentType = 1; // 0 = Book at ₹0, 1 = Pay default advance (e.g. 25%), 2 = Pay 100%
+  List<int> _payAdvanceOptions = [0, 25, 100]; // Default fallback options
+  int _selectedPercentage = 25; // Default active percentage selection
 
   @override
   void initState() {
@@ -92,6 +96,37 @@ class _BookingReviewScreenState extends State<BookingReviewScreen> {
     _basePrice = double.tryParse(widget.price.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0.0;
 
     _fetchAddons();
+    if (widget.advanceOptions != null && widget.advanceOptions!.isNotEmpty) {
+      _payAdvanceOptions = widget.advanceOptions!;
+      if (_payAdvanceOptions.contains(25)) {
+        _selectedPercentage = 25;
+      } else {
+        _selectedPercentage = _payAdvanceOptions.firstWhere((val) => val > 0, orElse: () => _payAdvanceOptions.first);
+      }
+    } else {
+      _loadSettings();
+    }
+  }
+
+  Future<void> _loadSettings() async {
+    try {
+      final value = await SettingsService.getSettingValue('pay_advance_options');
+      if (value != null && value is List) {
+        final List<int> parsed = value.map<int>((val) => int.parse(val.toString())).toList();
+        if (parsed.isNotEmpty) {
+          setState(() {
+            _payAdvanceOptions = parsed;
+            if (parsed.contains(25)) {
+              _selectedPercentage = 25;
+            } else {
+              _selectedPercentage = parsed.firstWhere((val) => val > 0, orElse: () => parsed.first);
+            }
+          });
+        }
+      }
+    } catch (e) {
+      print('Error loading settings in BookingReviewScreen: $e');
+    }
   }
 
   Future<void> _fetchAddons() async {
@@ -158,23 +193,12 @@ class _BookingReviewScreenState extends State<BookingReviewScreen> {
     return 25.0;
   }
 
-  double get _advancePercentage {
-    if (_selectedPaymentType == 0) return 0.0;
-    if (_selectedPaymentType == 2) return 100.0;
-    return _defaultAdvancePercentage;
-  }
+  double get _advancePercentage => _selectedPercentage.toDouble();
 
   double get _advancePrice {
-    if (_selectedPaymentType == 0) return 0.0;
-    if (_selectedPaymentType == 2) return _finalPrice;
-    if (widget.advance != null && widget.advance! > 0) {
-      double basePriceFromWidget = double.tryParse(widget.price.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0.0;
-      if (basePriceFromWidget > 0) {
-        double ratio = widget.advance! / basePriceFromWidget;
-        return _finalPrice * ratio;
-      }
-    }
-    return _finalPrice * 0.25;
+    if (_selectedPercentage == 0) return 0.0;
+    if (_selectedPercentage == 100) return _finalPrice;
+    return _finalPrice * (_selectedPercentage / 100.0);
   }
 
   double get _duePrice => _finalPrice - _advancePrice;
@@ -296,7 +320,6 @@ class _BookingReviewScreenState extends State<BookingReviewScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _buildSummaryCard(),
-                  _buildAdvancePaymentInfo(),
                   const SizedBox(height: 12),
                   _buildCancellationPolicy(),
                   const SizedBox(height: 20),
@@ -736,7 +759,87 @@ class _BookingReviewScreenState extends State<BookingReviewScreen> {
               Row(
                 children: [
                   Text('Total Fare ', style: GoogleFonts.outfit(fontSize: 16, fontWeight: FontWeight.bold)),
-                  Icon(Icons.info_outline, size: 16, color: Colors.grey.shade400),
+                  GestureDetector(
+                    onTap: () {
+                      showModalBottomSheet(
+                        context: context,
+                        backgroundColor: Colors.white,
+                        shape: const RoundedRectangleBorder(
+                          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                        ),
+                        builder: (context) {
+                          return Padding(
+                            padding: const EdgeInsets.all(24.0),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(Icons.payment_outlined, color: Colors.amber.shade800, size: 20),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      'Fare & Advance Summary',
+                                      style: GoogleFonts.outfit(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.amber.shade900),
+                                    ),
+                                  ],
+                                ),
+                                const Divider(height: 24, color: Colors.amber),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text('Total Ride Fare:', style: GoogleFonts.outfit(fontSize: 14, color: Colors.grey.shade700)),
+                                    Text('₹ ${_finalPrice.toStringAsFixed(0)}', style: GoogleFonts.outfit(fontSize: 15, fontWeight: FontWeight.bold)),
+                                  ],
+                                ),
+                                const SizedBox(height: 12),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text('Advance Booking %:', style: GoogleFonts.outfit(fontSize: 14, color: Colors.grey.shade700)),
+                                    Text('${_advancePercentage.toStringAsFixed(0)}%', style: GoogleFonts.outfit(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.amber.shade800)),
+                                  ],
+                                ),
+                                const SizedBox(height: 12),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text('Advance Amount Payable:', style: GoogleFonts.outfit(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black)),
+                                    Text('₹ ${_advancePrice.toStringAsFixed(0)}', style: GoogleFonts.outfit(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.orange.shade800)),
+                                  ],
+                                ),
+                                const Divider(height: 24),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text('Due Amount (Payable to pilot):', style: GoogleFonts.outfit(fontSize: 14, color: Colors.grey.shade700)),
+                                    Text('₹ ${_duePrice.toStringAsFixed(0)}', style: GoogleFonts.outfit(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.green.shade700)),
+                                  ],
+                                ),
+                                const SizedBox(height: 24),
+                                SizedBox(
+                                  width: double.infinity,
+                                  height: 50,
+                                  child: ElevatedButton(
+                                    onPressed: () => Navigator.pop(context),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.amber.shade600,
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                    ),
+                                    child: Text('Close', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      );
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.all(4.0),
+                      child: Icon(Icons.info_outline, size: 18, color: Colors.grey.shade600),
+                    ),
+                  ),
                 ],
               ),
               Column(
@@ -754,62 +857,60 @@ class _BookingReviewScreenState extends State<BookingReviewScreen> {
           ),
           const SizedBox(height: 16),
           Row(
-            children: [
-              _buildPayOption(
-                'Book at ₹0',
-                isSelected: _selectedPaymentType == 0,
-                onTap: () {
-                  setState(() {
-                    _selectedPaymentType = 0;
-                  });
-                },
-              ),
-              const SizedBox(width: 8),
-              _buildPayOption(
-                'Pay ${_defaultAdvancePercentage.toStringAsFixed(0)}%',
-                isSelected: _selectedPaymentType == 1,
-                onTap: () {
-                  setState(() {
-                    _selectedPaymentType = 1;
-                  });
-                },
-              ),
-              const SizedBox(width: 8),
-              _buildPayOption(
-                'Pay 100%',
-                isSelected: _selectedPaymentType == 2,
-                onTap: () {
-                  setState(() {
-                    _selectedPaymentType = 2;
-                  });
-                },
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: SizedBox(
-                  height: 54,
-                  child: ElevatedButton(
-                    onPressed: _isCreatingBooking ? null : _handleConfirmBooking,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.orange.shade700,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      elevation: 0,
-                    ),
-                    child: _isCreatingBooking
-                        ? const CircularProgressIndicator(color: Colors.white)
-                        : Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text('Pay Now',
-                                  style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-                              Text('₹ ${_advancePrice.toStringAsFixed(0)}',
-                                  style: GoogleFonts.outfit(color: Colors.white, fontSize: 14)),
-                            ],
-                          ),
+            children: _payAdvanceOptions.map((opt) {
+              final String label;
+              if (opt == 0) {
+                label = 'Book at ₹0';
+              } else if (opt == 100) {
+                label = 'Pay 100%';
+              } else {
+                label = 'Pay $opt%';
+              }
+              final bool isSelected = _selectedPercentage == opt;
+              return Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                  child: _buildPayOption(
+                    label,
+                    isSelected: isSelected,
+                    onTap: () {
+                      setState(() {
+                        _selectedPercentage = opt;
+                      });
+                    },
                   ),
                 ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            height: 54,
+            child: ElevatedButton(
+              onPressed: _isCreatingBooking ? null : _handleConfirmBooking,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange.shade700,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                elevation: 0,
               ),
-            ],
+              child: _isCreatingBooking
+                  ? const CircularProgressIndicator(color: Colors.white)
+                  : Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          _selectedPercentage == 0 ? 'Book Ride' : 'Pay Now',
+                          style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                        ),
+                        if (_selectedPercentage != 0)
+                          Text(
+                            '₹ ${_advancePrice.toStringAsFixed(0)}',
+                            style: GoogleFonts.outfit(color: Colors.white, fontSize: 14),
+                          ),
+                      ],
+                    ),
+            ),
           ),
         ],
       ),
